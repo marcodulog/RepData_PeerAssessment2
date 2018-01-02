@@ -1,0 +1,10 @@
+name: Publish Document
+title:
+username:
+account: rpubs
+server: rpubs.com
+hostUrl: rpubs.com
+appId: https://api.rpubs.com/api/v1/document/345388/421386c460b342afb104ca8c9f6b2c8a
+bundleId: https://api.rpubs.com/api/v1/document/345388/421386c460b342afb104ca8c9f6b2c8a
+url: http://rpubs.com/mdulog/345388
+when: 1514822277.06239

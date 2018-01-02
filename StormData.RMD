@@ -1,0 +1,203 @@
+---
+title: "Effect of NOAA Storm Data for USA"
+author: "Marco Dulog"
+date: "December 29, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache.lazy = TRUE)
+```
+
+## Synopsis
+
+This report attempts to summarize the effect of Storm Damage on property people in the United States using Data from U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database from January 3, 1950, through November 30, 2011.  The data in this database contains recorded weather events across the United States along with the number of injuries, deaths, and property damages.  
+
+### Property Damage Assumption for Weather Events
+*Based upon data in the Results section, we can make the assumption that flood and storm-related events operate on a much wider area and can cause more devastation.  However, with sufficient warning, the people have the opportunity to leave the affected area.*
+
+### Population Damage Assumption for Weather Events
+*Based upon data in the Results section, we can make the assumption that tornado-related events have little warning and people do not have the opportunity vacate the potentially affected area.  Coupled with the destructive power of a tornado, this makes a very deadly combination*
+
+## Data Processing
+
+Data was loaded through the following file: 
+https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2
+
+The package SQLDF is heavily used in data preparation due to its simplicity and the author's knowledge of SQL.
+
+```{r, message=FALSE}
+require(sqldf)
+require(lubridate)
+setwd("c:/Users/Marco.Dulog/git/RepData_PeerAssessment2")
+```
+
+We first load the following file into the ds dataset and then create. 
+```{r}
+if (!exists("ds")){ 
+  ds <- read.csv(file=bzfile('StormData.csv.bz2'),strip.white = TRUE) 
+}
+```
+*Transformation*
+In a different dataset, evtypeUnique, was created to facilitate grouping.  The main transformation was to group all the events, which were inconsistent, to 15 categories.  This was done because data has 985 different event observations. 
+```{r}
+evtypeUnique<-sqldf("SELECT evtype as eventType, count(1) as Counter FROM ds GROUP BY evtype")
+evtypeUnique$CatGroup <- 
+  ifelse(grepl("TSTM|THUNDER|LIGHT|LIGN|STORM", evtypeUnique$eventType, ignore.case = TRUE),"STORM",
+  ifelse(grepl("HAIL", evtypeUnique$eventType,ignore.case = TRUE),'HAIL',
+  ifelse(grepl("HIGH WATER|FLOOD|FLOOOD|FLD", evtypeUnique$eventType,ignore.case = TRUE),'FLOOD',
+  ifelse(grepl("TYPHOON|TSUN|HURRICANE|TROPICAL DEPRESSION", evtypeUnique$eventType,ignore.case = TRUE),'HURRICANE',       
+  ifelse(grepl("TORNAD|TORND|FUNNEL|TNADO|BURST", evtypeUnique$eventType,ignore.case = TRUE),'TORNADO',       
+  ifelse(grepl("RAIN|SHOWER|PRECIP|WET WE", evtypeUnique$eventType,ignore.case = TRUE),'RAIN',        ifelse(grepl("GLAZE|RECORD COLD|FREEZ|FROST|LOW TEMP|COLD|BLIZ|RECORD LOW|ICE|WINT|ICY|ICE|SNOW|SLEET", evtypeUnique$eventType,ignore.case = TRUE),'WINTER EVENTS',          ifelse(grepl("Temperature record|WARM|HEAT|RECORD HIGH|HIGH TEMP|WARM TEMP|RECORD TEMP|HOT|DROUGHT|DRY|WARMTH", evtypeUnique$eventType,ignore.case = TRUE),'HEAT EVENTS',                ifelse(grepl("WIND|DUST DEV", evtypeUnique$eventType,ignore.case = TRUE),'WIND',                
+  ifelse(grepl("FIRE", evtypeUnique$eventType,ignore.case = TRUE),'FIRE',                
+  ifelse(grepl("FOG", evtypeUnique$eventType,ignore.case = TRUE),'FOG', 
+  ifelse(grepl("AVALA", evtypeUnique$eventType,ignore.case = TRUE),'AVALANCHE',
+  ifelse(grepl("MARINE|SWELL|SPOUT|TIDE|CURRENT|SURF|SEAS|COAST|WAVE",    evtypeUnique$eventType,ignore.case = TRUE),'MARINE EVENTS',                
+  ifelse(grepl("LAND|BEACH|MUD", evtypeUnique$eventType,ignore.case = TRUE),'ERROSION',                "OTHER")
+                                                                                      )))))))))))))
+```
+### Event Damage to Population
+
+Data processing determining storm affects to population is determined by capturing the fatalities and the injuries associated with the event type.  
+
+*Transformation*
+However, ranking the events in relation to population health damage and including death and injury in the same bucket did not seem appropriate.  It was determined that an injury would be ranked less than a fatality by 1/3.
+
+```{r}
+dsPopDmg<-sqldf("
+  SELECT upper(evtype) evtype
+  , SUM(fatalities) as fatalities
+  , SUM(injuries) as injuries 
+  , SUM((injuries * .3) + fatalities) as wgtdScore
+  FROM ds 
+  WHERE (IfNull(injuries,0) > 0 or IfNull(fatalities,0) > 0) 
+  GROUP BY upper(evtype)")
+```
+
+Afterwards, the data is grouped by the category groups into a different dataset.  
+```{r}
+dsGroupPop<-sqldf("
+SELECT evt.CatGroup
+, SUM(ds.fatalities) as fatalities
+, SUM(ds.injuries) as injuries
+, SUM(ds.wgtdScore) as wgtdScore
+FROM dsPopDmg ds
+JOIN evtypeUnique evt
+ON ds.evtype = evt.EventType
+WHERE 1 = 1
+GROUP BY evt.[CatGroup]")
+```
+
+### Event Damage to Property
+
+Data processing determining storm affects to property is determined by capturing the property damage and crop damage associated with event type.  Ranking the weather events was easier since the damage to property was measured in dollars.  The difficulty with this that the data associated with the damage values were spread across two different columns.  
+
+*Transformation*
+The column propdmgexp and cropdmgexp are alphanumeric values (0-7) and (h, k, m and b).  The values 0-7 are treated as zero values (i.e. 5 translates to 10,000) and the character values are treated as (hundereds, thousands, millions and billions).  Crop damage property values appears to be limited to (h, k, m and b)
+```{r}
+dsPropDmg<-sqldf("
+    SELECT evtype
+    , (propDmgAmt * propdmgexp) as propertyDamage
+    , (cropDmgAmt * cropDmgExp) as cropDamage
+    FROM(
+      SELECT upper(evtype) as evtype
+      , IfNull(propdmg,0) as propDmgAmt
+      , CASE 
+          WHEN lower(propdmgexp) = '1' THEN 10.00
+          WHEN lower(propdmgexp) = '2' THEN 100.00
+          WHEN lower(propdmgexp) = '3' THEN 1000.00
+          WHEN lower(propdmgexp) = '4' THEN 10000.00
+          WHEN lower(propdmgexp) = '5' THEN 100000.00
+          WHEN lower(propdmgexp) = '6' THEN 1000000.00
+          WHEN lower(propdmgexp) = '7' THEN 10000000.00
+          WHEN lower(propdmgexp) = 'h' then 100.00
+          WHEN lower(propdmgexp) = 'k' then 1000.00
+          WHEN lower(propdmgexp) = 'm' then 1000000.00
+          WHEN lower(propdmgexp) = 'b' then 1000000000.00
+        ELSE 0
+        END as propdmgexp
+      , IfNull(cropdmg,0) as cropDmgAmt
+      , CASE 
+          WHEN lower(cropdmgexp) = 'h' then 100.00
+          WHEN lower(cropdmgexp) = 'k' then 1000.00
+          WHEN lower(cropdmgexp) = 'm' then 1000000.00
+          WHEN lower(cropdmgexp) = 'b' then 1000000000.00
+        ELSE 0
+        END as cropdmgexp
+    FROM ds
+      WHERE (IfNull(propdmg,0) > 0 or IfNull(cropdmg,0) > 0)
+    ) v
+  ")
+
+dsPropertyDamage<-sqldf("
+  SELECT evtype
+  , SUM(propertyDamage) as propertyDamage
+  , SUM(cropDamage) as cropDamage
+  , SUM(propertyDamage + cropDamage) as combinedDamage 
+  FROM dsPropDmg 
+  GROUP BY evtype ")
+```
+Afterwards, the data is grouped by the category groups into a different dataset.  
+```{r}
+dsGroupProp<-sqldf("
+SELECT evt.CatGroup
+, SUM(propertyDamage) propertyDamage
+, SUM(cropDamage) cropDamage
+, SUM(combinedDamage) combinedDamage
+FROM dsPropertyDamage ds
+JOIN evtypeUnique evt
+on ds.evtype = evt.EventType
+WHERE 1 = 1
+GROUP BY evt.CatGroup
+")
+
+```
+
+
+## Results
+
+After constructing the grouping datasets (dsGroupPop - Population Damage, dsGroupProp - Property Damage) for weather events, the data associated with each set can be plotted to determine which weather events cause the most damage.
+
+### Population Damge
+
+Here is a sample of the population damage sorted descending by the weighted score. 
+```{r}
+head(dsGroupPop[order(-dsGroupPop$wgtdScore),])
+```
+Based upon this, we can see that tornado damage is by overall the most damaging of the weather events throughout the reported years.  This is more evidant with a graph.
+```{r fig.width=15, fig.height=7}
+mat10Pop<-sqldf("select fatalities, injuries from dsGroupPop order by wgtdScore desc LIMIT 10")
+mat10PopHead<-sqldf("select CatGroup from dsGroupPop order by wgtdScore desc LIMIT 10")
+barplot(t(mat10Pop)
+        , names.arg=mat10PopHead$CatGroup
+        , ylim = c(0,80000)
+        , beside = TRUE
+        , col=c("red", "blue")
+        , main="Weighted Population Damage by Weather Events"
+        )
+
+legend("topright",names(mat10Pop), fill=c("red","blue"))
+```
+
+### Property Damage
+
+Here is a sample of the property damage sorted decending by the combined damage of crops and property.
+```{r}
+head(dsGroupProp[order(-dsGroupProp$combinedDamage),])
+```
+
+Based upon this data, we can see that the items categorized as FLOOD have caused the most damge for both property and crops; hurricanes, came in second and the storm category is third.  Again, this is more evident using a graph.
+
+```{r fig.width=15, fig.height=7}
+mat10Prop<-sqldf("select (propertyDamage/1000000) as propertyDamage, (cropDamage/1000000) as cropDamage from dsGroupProp order by combinedDamage desc LIMIT 10")
+mat10PropHead<-sqldf("select CatGroup from dsGroupProp order by combinedDamage desc LIMIT 10")
+barplot(t(mat10Prop)
+        , names.arg=mat10PropHead$CatGroup
+        , beside = TRUE
+        , col=c("red", "blue")
+        , main="Property Damage by Weather Events per Million"
+        )
+
+legend("topright",names(mat10Prop), fill=c("red","blue"))
+
+```
